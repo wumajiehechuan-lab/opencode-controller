@@ -151,10 +151,45 @@ Send-OpenCodeMessage -SessionId $id -Message "List files" -Agent "general"
 
 ### 目录访问限制
 
-OpenCode 只能访问以下目录：
+**注意：** 这是 OpenCode 自身的安全限制，不是 OpenCode Controller 的限制。
+
+默认情况下，OpenCode 只能访问以下目录：
 - `D:\newtype-profile`
 - `C:\Users\admin\Documents`
 - `C:\Users\admin\Projects`
+
+#### 如何自定义允许的目录
+
+你可以通过修改 OpenCode 的配置来更改允许的目录：
+
+```powershell
+# 编辑 OpenCode 配置
+notepad $env:USERPROFILE\.config\opencode\opencode.json
+```
+
+在配置中添加或修改 `allowedDirectories`：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "allowedDirectories": [
+    "D:\\newtype-profile",
+    "D:\\my-projects",
+    "C:\\Users\\admin\\Documents",
+    "C:\\work"
+  ]
+}
+```
+
+修改后需要重启 OpenCode 服务器：
+
+```powershell
+# 停止现有服务器
+Get-Process -Name "opencode","node" | Stop-Process
+
+# 重新启动
+opencode serve --port 4096
+```
 
 ---
 
