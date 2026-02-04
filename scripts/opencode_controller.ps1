@@ -17,7 +17,7 @@
 
 # Default configuration
 $script:DefaultPort = 4096
-$script:DefaultHost = "127.0.0.1"
+$script:DefaultServerHost = "127.0.0.1"
 $script:DefaultWorkingDir = "D:\mojing"
 
 function New-OpenCodeController {
@@ -27,7 +27,7 @@ function New-OpenCodeController {
     #>
     param(
         [int]$Port = $script:DefaultPort,
-        [string]$Host = $script:DefaultHost,
+        [string]$ServerHost = $script:DefaultServerHost,
         [string]$WorkingDir = $script:DefaultWorkingDir,
         [bool]$AutoStart = $true,
         [int]$ServerTimeout = 30
@@ -40,11 +40,11 @@ function New-OpenCodeController {
     
     $controller = @{
         Port = $Port
-        Host = $Host
+        ServerHost = $ServerHost
         WorkingDir = $WorkingDir
         AutoStart = $AutoStart
         ServerTimeout = $ServerTimeout
-        BaseUrl = "http://${Host}:${Port}"
+        BaseUrl = "http://${ServerHost}:${Port}"
         ServerProcess = $null
     }
     
@@ -85,17 +85,17 @@ function Start-OpenCodeServer {
         return $true
     }
     
-    Write-Host "Starting OpenCode server on $($Controller.Host):$($Controller.Port)..."
+    Write-Host "Starting OpenCode server on $($Controller.ServerHost):$($Controller.Port)..."
     
     try {
         # Check if opencode is available
         $null = Get-Command opencode -ErrorAction Stop
         
-        # Start server process
-        $process = Start-Process -FilePath "opencode" `
-            -ArgumentList "serve", "--port", $Controller.Port, "--hostname", $Controller.Host `
+        # Start server process (use cmd /c to run npm script)
+        $process = Start-Process -FilePath "cmd" `
+            -ArgumentList "/c", "opencode serve --port $($Controller.Port) --hostname $($Controller.ServerHost)" `
             -WorkingDirectory $Controller.WorkingDir `
-            -WindowStyle Hidden `
+            -WindowStyle Minimized `
             -PassThru
         
         $Controller.ServerProcess = $process
@@ -245,12 +245,16 @@ function Send-OpenCodeMessage {
     <#
     .SYNOPSIS
         Send a message to a session.
+        
+    .DESCRIPTION
+        IMPORTANT: For OpenCode to process the message, you should specify an agent.
+        Recommended: agent = "general" for simple tasks, "chief" for complex coordination.
     #>
     param(
         [hashtable]$Controller,
         [string]$SessionId,
         [string]$Message,
-        [string]$Agent = $null,
+        [string]$Agent = "general",
         [string]$Model = $null,
         [switch]$NoReply
     )
@@ -263,8 +267,11 @@ function Send-OpenCodeMessage {
     if ($Model) { $body.model = $Model }
     if ($NoReply) { $body.noReply = $true }
     
+    # Use longer timeout for sync calls
+    $timeout = if ($NoReply) { 30 } else { 120 }
+    
     return Invoke-OpenCodeApi -Controller $Controller -Method "POST" `
-        -Path "/session/$SessionId/message" -Body $body -TimeoutSec 120
+        -Path "/session/$SessionId/message" -Body $body -TimeoutSec $timeout
 }
 
 function Send-OpenCodeMessageAsync {
@@ -303,8 +310,9 @@ function Get-OpenCodeMessages {
         [int]$Limit = 50
     )
     
-    return Invoke-OpenCodeApi -Controller $Controller -Method "GET" `
-        -Path "/session/$SessionId/message" -Body @{ limit = $Limit }
+    # Use query parameter instead of body for GET request
+    $path = "/session/$SessionId/message?limit=$Limit"
+    return Invoke-OpenCodeApi -Controller $Controller -Method "GET" -Path $path
 }
 
 function Wait-OpenCodeCompletion {
@@ -361,19 +369,5 @@ function Get-OpenCodeDiff {
     return Invoke-OpenCodeApi -Controller $Controller -Method "GET" -Path $path
 }
 
-# Export functions
-Export-ModuleMember -Function @(
-    "New-OpenCodeController",
-    "Test-OpenCodeServer",
-    "Start-OpenCodeServer",
-    "Stop-OpenCodeServer",
-    "New-OpenCodeSession",
-    "Get-OpenCodeSession",
-    "Remove-OpenCodeSession",
-    "Get-OpenCodeSessionStatus",
-    "Send-OpenCodeMessage",
-    "Send-OpenCodeMessageAsync",
-    "Get-OpenCodeMessages",
-    "Wait-OpenCodeCompletion",
-    "Get-OpenCodeDiff"
-)
+# Functions exported when used as module
+# For dot-sourcing, all functions are available

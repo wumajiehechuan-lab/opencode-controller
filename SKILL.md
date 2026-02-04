@@ -16,227 +16,312 @@ This skill allows you to:
 - Retrieve results asynchronously
 - Monitor task progress
 
-## Quick Start
+## ⚠️ Critical Requirements
 
-```python
-from opencode_controller import OpenCodeController
+### 1. Must Specify Agent
 
-# Initialize (auto-starts server if needed)
-ctrl = OpenCodeController(port=4096, working_dir="D:\mojing")
+**Important:** When sending messages, you **must** specify the `agent` parameter. Without it, OpenCode will not process the message.
 
-# Create a session
-session = ctrl.create_session(title="Fix bug in auth module")
+```powershell
+# ❌ WRONG - Message will not be processed
+Send-OpenCodeMessage -Controller $ctrl -SessionId $id -Message "List files"
 
-# Send a task
-ctrl.send_message(session["id"], "Fix the login bug in auth.ts where JWT tokens aren't validated properly")
-
-# Wait for completion and get result
-result = ctrl.wait_for_completion(session["id"], timeout=300)
-print(result)
+# ✅ CORRECT - Use 'general' agent for most tasks
+Send-OpenCodeMessage -Controller $ctrl -SessionId $id -Message "List files" -Agent "general"
 ```
+
+**Available Agents:**
+- `general` - General-purpose tasks (recommended for most use cases)
+- `chief` - Complex coordination tasks
+- `explore` - Codebase exploration
+- `deputy`, `researcher`, `writer`, `editor` - Specialized sub-agents
+
+### 2. Directory Access Restrictions
+
+OpenCode can only access files in these directories:
+- `D:\newtype-profile`
+- `C:\Users\admin\Documents`
+- `C:\Users\admin\Projects`
+
+If you specify a working directory outside these paths, OpenCode will refuse file operations.
+
+## Quick Start (PowerShell - Windows)
+
+For Windows environments without Python:
+
+```powershell
+# Load the script (dot-source)
+. .\scripts\opencode_controller.ps1
+
+# Create controller
+$ctrl = New-OpenCodeController -WorkingDir "D:\newtype-profile\my-project"
+
+# Create session
+$session = New-OpenCodeSession -Controller $ctrl -Title "Fix bug"
+
+# Send task (CRITICAL: specify -Agent!)
+$response = Send-OpenCodeMessage -Controller $ctrl `
+    -SessionId $session.id `
+    -Message "Create a hello.txt file with greeting" `
+    -Agent "general"
+
+# Check response
+$response.parts | Where-Object { $_.type -eq "text" } | ForEach-Object { $_.text }
+
+# Cleanup
+Remove-OpenCodeSession -Controller $ctrl -SessionId $session.id
+```
+
+## API Reference (PowerShell)
+
+### OpenCodeController Object
+
+```powershell
+$ctrl = @{
+    Port = 4096                    # Server port
+    ServerHost = "127.0.0.1"       # Server host
+    WorkingDir = "D:\newtype-profile"  # Working directory
+    AutoStart = $true              # Auto-start server if not running
+    BaseUrl = "http://127.0.0.1:4096"
+}
+```
+
+### Functions
+
+**`New-OpenCodeController`**
+```powershell
+$ctrl = New-OpenCodeController `
+    -Port 4096 `
+    -WorkingDir "D:\newtype-profile" `
+    -AutoStart $true
+```
+
+**`New-OpenCodeSession`**
+```powershell
+$session = New-OpenCodeSession -Controller $ctrl -Title "Task description"
+# Returns: @{ id = "ses_xxx"; title = "..."; ... }
+```
+
+**`Send-OpenCodeMessage`** ⭐ RECOMMENDED
+```powershell
+$response = Send-OpenCodeMessage `
+    -Controller $ctrl `
+    -SessionId $session.id `
+    -Message "Your task here" `
+    -Agent "general"              # REQUIRED!
+
+# Extract text from response
+$text = $response.parts | Where-Object { $_.type -eq "text" } | ForEach-Object { $_.text }
+```
+
+**`Send-OpenCodeMessageAsync`** ⚠️ Not Recommended
+```powershell
+# Fire-and-forget (may not trigger processing)
+Send-OpenCodeMessageAsync -Controller $ctrl -SessionId $session.id -Message "Task"
+```
+
+**`Wait-OpenCodeCompletion`** ⚠️ Known Issues
+```powershell
+# May timeout even when task succeeds
+$result = Wait-OpenCodeCompletion `
+    -Controller $ctrl `
+    -SessionId $session.id `
+    -Timeout 60
+```
+
+**`Remove-OpenCodeSession`**
+```powershell
+Remove-OpenCodeSession -Controller $ctrl -SessionId $session.id
+```
+
+## Usage Patterns
+
+### Pattern 1: Simple Task with Result Verification
+
+**Recommended approach** - Don't rely on `Wait-OpenCodeCompletion`, verify results directly:
+
+```powershell
+. .\scripts\opencode_controller.ps1
+
+$ctrl = New-OpenCodeController -WorkingDir "D:\newtype-profile\my-project"
+$session = New-OpenCodeSession -Controller $ctrl -Title "Create config"
+
+# Send task
+$response = Send-OpenCodeMessage -Controller $ctrl `
+    -SessionId $session.id `
+    -Message "Create a config.json file with { name: 'test' }" `
+    -Agent "general"
+
+Write-Host "Task acknowledged: $($response.parts[0].text)"
+
+# Wait for background processing
+Start-Sleep -Seconds 5
+
+# Verify result directly (don't trust API status)
+if (Test-Path "D:\newtype-profile\my-project\config.json") {
+    Write-Host "✓ Success!"
+    Get-Content "D:\newtype-profile\my-project\config.json"
+} else {
+    Write-Host "✗ Task may have failed"
+}
+
+# Cleanup
+Remove-OpenCodeSession -Controller $ctrl -SessionId $session.id
+```
+
+### Pattern 2: Code Editing Task
+
+```powershell
+. .\scripts\opencode_controller.ps1
+
+$ctrl = New-OpenCodeController -WorkingDir "D:\newtype-profile\project"
+$session = New-OpenCodeSession -Controller $ctrl -Title "Refactor code"
+
+# Multi-step task
+$task = @"
+Read the file at D:\newtype-profile\project\utils.py and:
+1. Add docstrings to all functions
+2. Add type hints
+3. Save the updated file
+"@
+
+$response = Send-OpenCodeMessage -Controller $ctrl `
+    -SessionId $session.id `
+    -Message $task `
+    -Agent "general"
+
+# Check assistant response
+$response.parts | Where-Object { $_.type -eq "text" } | ForEach-Object { $_.text }
+```
+
+### Pattern 3: Batch Processing
+
+```powershell
+. .\scripts\opencode_controller.ps1
+
+$ctrl = New-OpenCodeController -WorkingDir "D:\newtype-profile"
+$tasks = @(
+    "Create file1.txt with content A",
+    "Create file2.txt with content B",
+    "Create file3.txt with content C"
+)
+
+$sessions = foreach ($task in $tasks) {
+    $session = New-OpenCodeSession -Controller $ctrl -Title $task
+    
+    Send-OpenCodeMessage -Controller $ctrl `
+        -SessionId $session.id `
+        -Message $task `
+        -Agent "general" | Out-Null
+    
+    $session.id
+}
+
+# Wait and verify
+Start-Sleep -Seconds 10
+
+foreach ($id in $sessions) {
+    $session = Get-OpenCodeSession -Controller $ctrl -SessionId $id
+    Write-Host "Session $($session.title): $($session.time.updated)"
+    Remove-OpenCodeSession -Controller $ctrl -SessionId $id
+}
+```
+
+## Known Issues & Limitations
+
+### 1. Async Mode (`Send-OpenCodeMessageAsync`)
+- **Status:** ⚠️ Not working reliably
+- **Issue:** Messages sent via `prompt_async` endpoint may not trigger processing
+- **Workaround:** Use synchronous `Send-OpenCodeMessage` instead
+
+### 2. `Wait-ForCompletion` Status Detection
+- **Status:** ⚠️ Unreliable
+- **Issue:** May timeout even when task succeeds; session status endpoint returns empty
+- **Workaround:** Verify results directly (e.g., check if file exists)
+
+### 3. `Get-OpenCodeMessages` Returns Empty
+- **Status:** ⚠️ Intermittent
+- **Issue:** Sometimes returns empty array even when messages exist
+- **Workaround:** Query directly via REST API if needed
+
+### 4. Directory Restrictions
+- **Status:** By design
+- **Issue:** Can only access `D:\newtype-profile`, `C:\Users\admin\Documents`, `C:\Users\admin\Projects`
+- **Workaround:** Use these directories or create symlinks
 
 ## Requirements
 
-- OpenCode installed and available in PATH
-- Python 3.x with `requests` library (or PowerShell 5.1+)
+- OpenCode installed and available in PATH (`opencode --version`)
+- PowerShell 5.1+ (Windows)
+- Or Python 3.x with `requests` library
 
 ### Setup
 
-**Option 1: Python**
+**PowerShell (Windows - Recommended):**
+```powershell
+cd skills\opencode-controller\scripts
+. .\opencode_controller.ps1
+```
+
+**Python (if available):**
 ```bash
 cd scripts
 pip install -r requirements.txt
 python -c "from opencode_controller import OpenCodeController; print('OK')"
 ```
 
-**Option 2: PowerShell (Windows)**
-Use the PowerShell module if Python is not available:
-```powershell
-Import-Module .\scripts\opencode_controller.ps1
-```
-
-## API Reference
-
-### OpenCodeController Class
-
-#### Initialization
-```python
-ctrl = OpenCodeController(
-    port=4096,                    # Server port
-    host="127.0.0.1",            # Server host
-    working_dir="D:\mojing",     # Default working directory
-    auto_start=True              # Auto-start server if not running
-)
-```
-
-#### Methods
-
-**`is_server_running()`** → bool
-Check if OpenCode server is running.
-
-**`start_server()`** → bool
-Start the OpenCode server. Returns True if successful.
-
-**`create_session(title=None, parent_id=None)`** → dict
-Create a new session. Returns session info with `id`.
-
-**`send_message(session_id, message, agent=None, model=None)`** → dict
-Send a message to a session. Returns message info.
-
-**`send_async(session_id, message)`** → None
-Send a message asynchronously (fire and forget).
-
-**`get_messages(session_id, limit=50)`** → list
-Get messages from a session.
-
-**`get_session_status(session_id)`** → dict
-Get session status (idle, running, error, etc.).
-
-**`wait_for_completion(session_id, timeout=300, poll_interval=2)`** → str
-Wait for session to complete and return final output.
-
-**`list_sessions()`** → list
-List all active sessions.
-
-**`delete_session(session_id)`** → bool
-Delete a session.
-
-**`abort_session(session_id)`** → bool
-Abort a running session.
-
-## Usage Patterns
-
-### Pattern 1: Simple Fire-and-Forget
-```python
-ctrl = OpenCodeController()
-session = ctrl.create_session("Quick fix")
-ctrl.send_async(session["id"], "Fix the typo in README.md")
-# Continue with other work...
-```
-
-### Pattern 2: Wait for Result
-```python
-ctrl = OpenCodeController(working_dir="D:\mojing\my-project")
-session = ctrl.create_session("Refactor utils")
-ctrl.send_message(session["id"], "Refactor utils.ts to use async/await")
-result = ctrl.wait_for_completion(session["id"], timeout=600)
-```
-
-### Pattern 3: Batch Multiple Tasks
-```python
-ctrl = OpenCodeController()
-tasks = [
-    "Add input validation to login form",
-    "Write unit tests for auth module",
-    "Update API documentation"
-]
-sessions = []
-for task in tasks:
-    session = ctrl.create_session(task[:30])
-    ctrl.send_async(session["id"], task)
-    sessions.append(session["id"])
-
-# Check all statuses
-for sid in sessions:
-    status = ctrl.get_session_status(sid)
-    print(f"{sid}: {status['status']}")
-```
-
-### Pattern 4: Interactive Monitoring
-```python
-ctrl = OpenCodeController()
-session = ctrl.create_session("Build feature")
-ctrl.send_message(session["id"], "Implement user profile page")
-
-# Poll for updates
-import time
-while True:
-    status = ctrl.get_session_status(session["id"])
-    messages = ctrl.get_messages(session["id"], limit=5)
-    
-    print(f"Status: {status['status']}")
-    for msg in messages:
-        print(f"  {msg['role']}: {msg['content'][:100]}...")
-    
-    if status['status'] == 'idle':
-        break
-    time.sleep(3)
-```
-
-## Error Handling
-
-The controller handles common errors:
-- Server not running → Auto-start or raise error
-- Connection timeout → Retry with backoff
-- Session not found → Clear error message
-- API errors → Raise OpenCodeAPIError with details
-
 ## Working Directory
 
-Default working directory is `D:\mojing`. OpenCode will operate in this directory unless specified otherwise in `create_session()`.
+Default working directory is `D:\newtype-profile`.
+
+**Important:** OpenCode can only access files in allowed directories. The server will start in your specified directory, but file operations are restricted to:
+- `D:\newtype-profile`
+- `C:\Users\admin\Documents`
+- `C:\Users\admin\Projects`
 
 ## Security Notes
 
 - Server runs on localhost by default (127.0.0.1)
 - No authentication in default setup (suitable for local use)
-- All file operations happen within the working directory
+- All file operations restricted to allowed directories
 
 ## Troubleshooting
 
 **"Server failed to start"**
-- Check if OpenCode is installed: `opencode --version`
-- Check if port 4096 is available
-- Check OpenCode logs in terminal
-
-**"Session timeout"**
-- Increase timeout parameter
-- Check if OpenCode is processing (may be slow)
-- Verify working directory exists
-
-**"Connection refused"**
-- Server may have crashed
-- Controller will auto-restart if `auto_start=True`
-
----
-
-## PowerShell Usage (Windows)
-
-For Windows environments without Python:
-
 ```powershell
-# Import the module
-Import-Module .\scripts\opencode_controller.ps1
+# Check OpenCode installation
+opencode --version
 
-# Create controller
-$ctrl = New-OpenCodeController -WorkingDir "D:\mojing"
+# Check port availability
+Get-NetTCPConnection -LocalPort 4096
 
-# Create session
-$session = New-OpenCodeSession -Controller $ctrl -Title "Fix bug"
-
-# Send task
-Send-OpenCodeMessageAsync -Controller $ctrl -SessionId $session.id `
-    -Message "Fix the auth bug in auth.ts"
-
-# Wait for result
-$result = Wait-OpenCodeCompletion -Controller $ctrl -SessionId $session.id -Timeout 300
-Write-Host $result
-
-# Cleanup
-Remove-OpenCodeSession -Controller $ctrl -SessionId $session.id
+# Check if process is running
+Get-Process -Name "opencode","node"
 ```
 
-### PowerShell Quick Task
+**"Message not processed / No assistant response"**
+- ✅ Make sure you specified `-Agent "general"`
+- ✅ Check that working directory is in allowed list
+- ✅ Try a simpler task first
 
-```powershell
-# One-liner quick task
-$ctrl = New-OpenCodeController
-$session = New-OpenCodeSession -Controller $ctrl -Title "Quick fix"
-Send-OpenCodeMessageAsync -Controller $ctrl -SessionId $session.id -Message "List files"
-Wait-OpenCodeCompletion -Controller $ctrl -SessionId $session.id
-Remove-OpenCodeSession -Controller $ctrl -SessionId $session.id
-```
+**"Cannot access directory"**
+- Use only allowed directories: `D:\newtype-profile`, `C:\Users\admin\Documents`, `C:\Users\admin\Projects`
+
+**"Timeout waiting for completion"**
+- This is a known issue with status detection
+- Verify results directly instead of relying on `Wait-OpenCodeCompletion`
 
 ## Script Location
 
-- Controller script: `scripts/opencode_controller.py`
-- Example usage: `scripts/example.py`
+- PowerShell Controller: `scripts/opencode_controller.ps1`
+- Python Controller: `scripts/opencode_controller.py`
+- Requirements: `scripts/requirements.txt`
+
+## Changelog
+
+### 2026-02-04
+- Fixed `$Host` variable conflict → `$ServerHost`
+- Fixed `Start-Process` npm script issue → use `cmd /c`
+- Discovered critical requirement: must specify `-Agent` parameter
+- Documented directory access restrictions
+- Added known issues section
